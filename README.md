@@ -12,17 +12,17 @@ A production-ready Telegram bot that continuously finds available Instagram user
 - `/ig`: Start the continuous search loop.
 - `/stop`: Stop the search loop.
 
-## Render Deployment Guide
-1. **GitHub**: Create a new repository and upload `bot.py`, `requirements.txt`, `Procfile`, `runtime.txt`, and `README.md`.
+## Render Deployment Guide (Docker - Recommended)
+1. **GitHub**: Create a new repository and upload all project files (including the new `Dockerfile`).
 2. **Render**:
-   - Go to [render.com](https://render.com) and create a new **Web Service** (or Background Worker).
+   - Go to [render.com](https://render.com) and create a new **Web Service**.
    - Connect your GitHub repository.
+   - Render will automatically detect the `Dockerfile`.
    - **Environment Variables**:
      - `TELEGRAM_BOT_TOKEN`: Your bot token from @BotFather.
      - `OPENROUTER_API_KEY`: Your API key from OpenRouter.
-   - **Build Command**: `pip install -r requirements.txt && playwright install chromium`
-   - **Start Command**: `python bot.py`
-3. **Deploy**: Click deploy and wait for the bot to start.
+     - `PORT`: 10000 (default)
+3. **Deploy**: Click deploy. The Dockerfile handles all complex dependencies (Chromium, Python version) automatically.
 
 ## How it Works
 1. The bot generates 20 usernames per batch using the OpenRouter AI.
