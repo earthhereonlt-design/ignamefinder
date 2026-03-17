@@ -64,28 +64,57 @@ Rules:
 - Usernames must be readable.
 - Avoid random strings.
 - Avoid duplicates.
-- Return ONLY a JSON list of strings.
+- Return ONLY a JSON list of strings like ["user1", "user2"].
 """
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://render.com", # Required by some OpenRouter models
+        "X-Title": "InstaGhostBot"
     }
     data = {
-        "model": "nvidia/nemotron-3-super:free",
+        "model": "meta-llama/llama-3.3-70b:free",
         "messages": [{"role": "user", "content": prompt}]
     }
     
     try:
         response = requests.post(OPENROUTER_URL, headers=headers, json=data, timeout=30)
-        response.raise_for_status()
-        content = response.json()['choices'][0]['message']['content']
+        if response.status_code != 200:
+            print(f"OpenRouter Error {response.status_code}: {response.text}")
+            return get_fallback_usernames()
+            
+        resp_json = response.json()
+        
+        if 'choices' not in resp_json or not resp_json['choices']:
+            print(f"AI Error: Invalid response structure: {resp_json}")
+            return get_fallback_usernames()
+            
+        content = resp_json['choices'][0]['message']['content']
         # Extract JSON list
         start = content.find("[")
         end = content.rfind("]") + 1
-        return json.loads(content[start:end])
+        if start == -1 or end == 0:
+            print(f"AI Error: Could not find JSON list in content: {content}")
+            return get_fallback_usernames()
+            
+        usernames = json.loads(content[start:end])
+        if not isinstance(usernames, list):
+            return get_fallback_usernames()
+            
+        return [str(u).strip().lower() for u in usernames if u]
     except Exception as e:
         print(f"AI Generation Error: {e}")
-        return []
+        return get_fallback_usernames()
+
+def get_fallback_usernames():
+    """Returns a small list of hardcoded usernames if AI fails."""
+    bases = ["aadi", "river", "forest", "sky", "cloud", "storm", "echo", "shadow"]
+    suffixes = ["dev", "js", "node", "py", "cool", "vibe", "lost", "found"]
+    fallback = []
+    for _ in range(10):
+        name = f"{random.choice(bases)}.{random.choice(suffixes)}.{random.randint(10, 99)}"
+        fallback.append(name)
+    return fallback
 
 # --- Instagram Availability Check ---
 async def check_instagram_availability(browser, username):
@@ -134,14 +163,16 @@ async def send_and_delete(context, chat_id, text, delay):
     except:
         pass
 
-async def update_status(context):
+async def update_status(context, current_status=""):
     status_text = f"""
-Searching usernames...
+🔍 Instagram Username Finder Status:
 
 Attempts: {state.attempts}
-Available: {state.available}
-Taken: {state.taken}
-Current username: {state.current_username}
+✅ Available: {state.available}
+❌ Taken: {state.taken}
+
+Current: @{state.current_username}
+Status: {current_status}
 """
     try:
         if state.status_message_id:
@@ -173,24 +204,27 @@ async def search_loop(context):
                     
                     state.current_username = username
                     state.attempts += 1
-                    await update_status(context)
+                    await update_status(context, "🔄 Checking...")
                     
                     is_available = await check_instagram_availability(browser, username)
                     
                     if is_available is True:
                         state.available += 1
+                        await update_status(context, "✅ AVAILABLE!")
                         await context.bot.send_message(
                             chat_id=state.chat_id,
-                            text=f"AVAILABLE USERNAME FOUND\n\n{username}"
+                            text=f"💎 AVAILABLE USERNAME FOUND!\n\n@{username}"
                         )
-                        # Auto delete after 2 mins (handled by a separate task or just ignored if it's a "found" message)
+                        # Auto delete after 2 mins
                         asyncio.create_task(delete_after_delay(context, state.chat_id, username, 120))
                     elif is_available is False:
                         state.taken += 1
+                        await update_status(context, "❌ Taken")
                     else:
                         # Error or uncertain
-                        error_msg = f"⚠️ Error checking @{username}. Restarting process..."
-                        await send_and_delete(context, state.chat_id, error_msg, 10)
+                        await update_status(context, "⚠️ Error checking")
+                        error_msg = f"⚠️ Error checking @{username}. Retrying..."
+                        await send_and_delete(context, state.chat_id, error_msg, 5)
                     
                     # Anti-block delay
                     await asyncio.sleep(random.uniform(1.5, 4.0))
