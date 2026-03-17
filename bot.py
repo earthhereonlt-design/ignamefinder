@@ -43,12 +43,11 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Safari/605.1.15",
-    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_3_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (iPad; CPU OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"
 ]
 
 # --- Global State ---
@@ -91,7 +90,7 @@ Rules:
         "X-Title": "InstaGhostBot"
     }
     data = {
-        "model": "meta-llama/llama-3.3-70b:free",
+        "model": "meta-llama/llama-3.3-70b-instruct:free", # Corrected model ID with :free
         "messages": [{"role": "user", "content": prompt}]
     }
     
@@ -136,49 +135,77 @@ def get_fallback_usernames():
 
 # --- Instagram Availability Check ---
 async def check_instagram_availability(browser, username):
-    context = await browser.new_context(user_agent=random.choice(USER_AGENTS))
+    context = await browser.new_context(
+        user_agent=random.choice(USER_AGENTS),
+        viewport={'width': 1280, 'height': 720}
+    )
     page = await context.new_page()
     
     # Resource blocking to speed up
     await page.route("**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2}", lambda route: route.abort())
     
     try:
-        # Strategy: Check profile page directly. 
-        # If it returns 404 or "Page not found", it's likely available.
-        # Note: Instagram sometimes redirects to login, so we check content.
+        # Strategy 1: Profile Check
         url = f"https://www.instagram.com/{username}/"
-        response = await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+        logger.info(f"Checking profile: {url}")
+        response = await page.goto(url, wait_until="domcontentloaded", timeout=15000)
         
         if response.status == 404:
-            logger.info(f"Username @{username} returned 404. Likely available.")
+            logger.info(f"Username @{username} returned 404. Available.")
             await context.close()
             return True
             
         content = await page.content()
         if "Page not found" in content or "Sorry, this page isn't available" in content:
-            logger.info(f"Username @{username} page content says not found. Likely available.")
+            logger.info(f"Username @{username} content says not found. Available.")
             await context.close()
             return True
             
-        if response.status == 200:
-            logger.info(f"Username @{username} returned 200. Taken.")
+        if response.status == 200 and f"instagram.com/{username}" in page.url:
+            # If we are on the profile page and it's 200, it's taken
+            logger.info(f"Username @{username} profile exists. Taken.")
             await context.close()
             return False
-            
-        # Fallback to signup check if profile check is inconclusive
-        logger.info(f"Profile check for @{username} inconclusive (Status {response.status}). Trying signup check...")
-        await page.goto("https://www.instagram.com/accounts/emailsignup/", wait_until="networkidle", timeout=30000)
+
+        # Strategy 2: Signup Check (Fallback)
+        logger.info(f"Profile check inconclusive for @{username}. Trying signup page...")
+        await page.goto("https://www.instagram.com/accounts/emailsignup/", wait_until="networkidle", timeout=20000)
         
-        username_input = await page.wait_for_selector('input[name="username"]', timeout=10000)
-        await username_input.fill(username)
+        # Handle Cookie Consent if it appears
+        try:
+            cookie_btn = await page.wait_for_selector('button:has-text("Allow all cookies"), button:has-text("Accept All")', timeout=5000)
+            if cookie_btn:
+                await cookie_btn.click()
+                logger.info("Clicked cookie consent.")
+        except:
+            pass
+
+        # Wait for the username input
+        username_input = await page.wait_for_selector('input[name="username"], input[aria-label="Username"]', timeout=15000)
+        if not username_input:
+            logger.error(f"Could not find username input for @{username}")
+            await context.close()
+            return None
+
+        await username_input.click()
+        await username_input.fill("") 
+        await username_input.type(username, delay=random.randint(50, 150))
         await page.keyboard.press("Tab")
-        await asyncio.sleep(3)
+        
+        # Wait for validation
+        await asyncio.sleep(5)
         
         is_available = await page.evaluate("""() => {
-            const success = document.querySelector('span[aria-label="Success"]');
-            const error = document.querySelector('span[aria-label="Error"]');
+            // Check for success/error icons or text
+            const success = document.querySelector('span[aria-label="Success"], .coreSpriteInputAccepted, [aria-label="User name is available"]');
+            const error = document.querySelector('span[aria-label="Error"], .coreSpriteInputError, [aria-label="User name is not available"]');
             if (success) return true;
             if (error) return false;
+            
+            // Check for specific error text
+            const bodyText = document.body.innerText;
+            if (bodyText.includes("is not available") || bodyText.includes("Another account is using")) return false;
+            
             return null;
         }""")
         
@@ -187,6 +214,13 @@ async def check_instagram_availability(browser, username):
         return is_available
     except Exception as e:
         logger.error(f"Check Error for @{username}: {e}")
+        # Take a screenshot for debugging if it's a timeout
+        if "Timeout" in str(e):
+            try:
+                await page.screenshot(path=f"debug_{username}.png")
+                logger.info(f"Saved debug screenshot: debug_{username}.png")
+            except:
+                pass
         await context.close()
         return None
 
