@@ -5,11 +5,23 @@ import time
 import json
 import requests
 import threading
+import logging
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime, timedelta
 from telegram import Update, Bot
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from playwright.async_api import async_playwright
+
+# --- Logging Configuration ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("bot_errors.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # --- Health Check Server ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -55,16 +67,22 @@ state = BotState()
 
 # --- AI Username Generation ---
 async def generate_usernames():
-    prompt = """Generate 20 unique Instagram usernames in three styles:
-1. TECH STYLE (ONLY for the name 'Aadi'): e.g., aadi.js, aadi.dev, aadi.node
-2. NATURE STYLE: e.g., river.slow, forest.lost, sky.idle
-3. SARCASTIC STYLE: e.g., too.lazy, barely.awake, just.existing (Max 12 chars)
+    prompt = """Generate 30 unique Instagram usernames in exactly these three styles:
+
+1. AADI + TECH (Clean dev style):
+Examples: aadi.js, aadi.py, aadi.dev, aadi.sys, aadi.root, aadi.stack, aadi.node, aadi.core, aadi.code, aadi.logic, aadi.grid, aadi.proto, aadi.kernel, aadi.debug, aadi.cloud, aadi.build, aadi.script, aadi.deploy, aadi.server, aadi.engine.
+
+2. NATURE (No "aadi"):
+Examples: earth.drift, river.slow, sky.idle, ocean.calm, forest.deep, storm.low, cloud.soft, tide.low, wind.silent, rain.light, mist.fade, fog.grey, stone.cold, sand.soft, leaf.fall, wood.dark, sun.dim, moon.faded, wave.gentle, stream.slow.
+
+3. SARCASTIC (Short, 10–12 chars, no dots):
+Examples: notfineok, whateverok, idkbro, noideaman, whymepls, notagainok, okfinebro, surewhyok, sameoldbro, verycoolok, somaybeok, justwowok, niceoneok, coolstoryok, goodluckok.
 
 Rules:
-- Usernames must be readable.
+- Usernames must be readable and clean.
 - Avoid random strings.
 - Avoid duplicates.
-- Return ONLY a JSON list of strings like ["user1", "user2"].
+- Return ONLY a JSON list of strings like ["aadi.js", "earth.drift", "notfineok"].
 """
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -80,13 +98,13 @@ Rules:
     try:
         response = requests.post(OPENROUTER_URL, headers=headers, json=data, timeout=30)
         if response.status_code != 200:
-            print(f"OpenRouter Error {response.status_code}: {response.text}")
+            logger.error(f"OpenRouter Error {response.status_code}: {response.text}")
             return get_fallback_usernames()
             
         resp_json = response.json()
         
         if 'choices' not in resp_json or not resp_json['choices']:
-            print(f"AI Error: Invalid response structure: {resp_json}")
+            logger.error(f"AI Error: Invalid response structure: {resp_json}")
             return get_fallback_usernames()
             
         content = resp_json['choices'][0]['message']['content']
@@ -94,7 +112,7 @@ Rules:
         start = content.find("[")
         end = content.rfind("]") + 1
         if start == -1 or end == 0:
-            print(f"AI Error: Could not find JSON list in content: {content}")
+            logger.error(f"AI Error: Could not find JSON list in content: {content}")
             return get_fallback_usernames()
             
         usernames = json.loads(content[start:end])
@@ -103,18 +121,18 @@ Rules:
             
         return [str(u).strip().lower() for u in usernames if u]
     except Exception as e:
-        print(f"AI Generation Error: {e}")
+        logger.exception(f"AI Generation Exception: {e}")
         return get_fallback_usernames()
 
 def get_fallback_usernames():
-    """Returns a small list of hardcoded usernames if AI fails."""
-    bases = ["aadi", "river", "forest", "sky", "cloud", "storm", "echo", "shadow"]
-    suffixes = ["dev", "js", "node", "py", "cool", "vibe", "lost", "found"]
-    fallback = []
-    for _ in range(10):
-        name = f"{random.choice(bases)}.{random.choice(suffixes)}.{random.randint(10, 99)}"
-        fallback.append(name)
-    return fallback
+    """Returns a list of usernames based on the user's specific examples."""
+    aadi_tech = ["aadi.js", "aadi.py", "aadi.go", "aadi.rs", "aadi.ts", "aadi.dev", "aadi.sys", "aadi.root", "aadi.byte", "aadi.stack", "aadi.node", "aadi.loop", "aadi.core", "aadi.code", "aadi.data", "aadi.logic", "aadi.grid", "aadi.proto", "aadi.kernel", "aadi.debug", "aadi.cache", "aadi.array", "aadi.index", "aadi.queue", "aadi.hash", "aadi.cloud", "aadi.build", "aadi.compile", "aadi.script", "aadi.deploy", "aadi.server", "aadi.client", "aadi.engine", "aadi.stream", "aadi.thread", "aadi.process", "aadi.memory", "aadi.system", "aadi.module", "aadi.network"]
+    nature = ["earth.drift", "river.slow", "sky.idle", "ocean.calm", "forest.deep", "storm.low", "cloud.soft", "tide.low", "wind.silent", "rain.light", "mist.fade", "fog.grey", "stone.cold", "sand.soft", "leaf.fall", "wood.dark", "sun.dim", "moon.faded", "wave.gentle", "stream.slow", "field.open", "hill.calm", "valley.deep", "lake.still", "shore.empty", "dawn.soft", "dusk.silent", "night.cold", "light.dim", "shadow.long", "breeze.light", "thunder.low", "drizzle.soft", "ice.cold", "snow.light", "glow.faint", "dust.light", "ash.grey", "root.deep", "branch.low"]
+    sarcastic = ["notfineok", "whateverok", "idkbro", "noideaman", "whymepls", "notagainok", "okfinebro", "surewhyok", "sameoldbro", "verycoolok", "somaybeok", "justwowok", "niceoneok", "coolstoryok", "goodluckok", "tryagainok", "lolokbro", "mehwhatever", "nvmokbro", "kfineok", "idcanymore", "finewhatever", "brookfine", "okayigetit", "yeahnotsure", "idkreally", "notmyissue", "leaveitbro", "dontcareok", "stopitok"]
+    
+    all_examples = aadi_tech + nature + sarcastic
+    random.shuffle(all_examples)
+    return all_examples[:30]
 
 # --- Instagram Availability Check ---
 async def check_instagram_availability(browser, username):
@@ -125,19 +143,36 @@ async def check_instagram_availability(browser, username):
     await page.route("**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2}", lambda route: route.abort())
     
     try:
+        # Strategy: Check profile page directly. 
+        # If it returns 404 or "Page not found", it's likely available.
+        # Note: Instagram sometimes redirects to login, so we check content.
+        url = f"https://www.instagram.com/{username}/"
+        response = await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+        
+        if response.status == 404:
+            logger.info(f"Username @{username} returned 404. Likely available.")
+            await context.close()
+            return True
+            
+        content = await page.content()
+        if "Page not found" in content or "Sorry, this page isn't available" in content:
+            logger.info(f"Username @{username} page content says not found. Likely available.")
+            await context.close()
+            return True
+            
+        if response.status == 200:
+            logger.info(f"Username @{username} returned 200. Taken.")
+            await context.close()
+            return False
+            
+        # Fallback to signup check if profile check is inconclusive
+        logger.info(f"Profile check for @{username} inconclusive (Status {response.status}). Trying signup check...")
         await page.goto("https://www.instagram.com/accounts/emailsignup/", wait_until="networkidle", timeout=30000)
         
-        # Wait for the username input
         username_input = await page.wait_for_selector('input[name="username"]', timeout=10000)
         await username_input.fill(username)
-        
-        # Trigger validation (click elsewhere or press tab)
         await page.keyboard.press("Tab")
-        
-        # Wait for the validation icon or error message
-        # Instagram shows a green checkmark (Success) or a red X (Error)
-        # We check for the presence of the success icon
-        await asyncio.sleep(2) # Wait for async validation
+        await asyncio.sleep(3)
         
         is_available = await page.evaluate("""() => {
             const success = document.querySelector('span[aria-label="Success"]');
@@ -147,10 +182,11 @@ async def check_instagram_availability(browser, username):
             return null;
         }""")
         
+        logger.info(f"Signup check for @{username} result: {is_available}")
         await context.close()
         return is_available
     except Exception as e:
-        print(f"Check Error for {username}: {e}")
+        logger.error(f"Check Error for @{username}: {e}")
         await context.close()
         return None
 
@@ -185,7 +221,7 @@ Status: {current_status}
             msg = await context.bot.send_message(chat_id=state.chat_id, text=status_text)
             state.status_message_id = msg.message_id
     except Exception as e:
-        print(f"Status Update Error: {e}")
+        logger.exception(f"Status Update Error: {e}")
 
 # --- Main Loop ---
 async def search_loop(context):
@@ -230,6 +266,7 @@ async def search_loop(context):
                     await asyncio.sleep(random.uniform(1.5, 4.0))
                     
             except Exception as e:
+                logger.exception(f"Search Loop Error: {e}")
                 error_msg = f"❌ Fatal Error: {e}. Restarting..."
                 await send_and_delete(context, state.chat_id, error_msg, 10)
                 await asyncio.sleep(5)
@@ -275,7 +312,7 @@ async def stop_ig(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 if __name__ == "__main__":
     if not TELEGRAM_BOT_TOKEN:
-        print("Error: TELEGRAM_BOT_TOKEN not found.")
+        logger.error("TELEGRAM_BOT_TOKEN not found.")
         exit(1)
     
     # Start health check server in a background thread
@@ -286,5 +323,5 @@ if __name__ == "__main__":
     application.add_handler(CommandHandler("ig", start_ig))
     application.add_handler(CommandHandler("stop", stop_ig))
     
-    print("Bot is starting...")
+    logger.info("Bot is starting...")
     application.run_polling()
