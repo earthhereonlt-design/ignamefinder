@@ -1,0 +1,5 @@
+{
+  "name": "InstaGhost Python Bot",
+  "description": "Production-ready Python Telegram bot for finding available Instagram usernames using AI and Playwright.",
+  "requestFramePermissions": []
+}
