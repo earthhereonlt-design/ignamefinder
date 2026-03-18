@@ -301,7 +301,6 @@ async def search_loop(context):
 💎 *Username:* `@{username}`
 🔗 *Link:* [instagram.com/{username}](https://www.instagram.com/{username}/)
 ━━━━━━━━━━━━━━━━━━━━
-🕒 _This message will self-destruct in 2 minutes._
                         """
                         
                         msg = await context.bot.send_message(
@@ -310,8 +309,6 @@ async def search_loop(context):
                             parse_mode='Markdown',
                             disable_web_page_preview=True
                         )
-                        # Auto delete after 2 mins
-                        asyncio.create_task(delete_msg_after_delay(context, state.chat_id, msg.message_id, 120))
                     elif is_available is False:
                         state.taken += 1
                         await update_status(context, "❌ Taken")
