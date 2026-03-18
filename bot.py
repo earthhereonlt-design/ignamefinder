@@ -169,11 +169,23 @@ async def check_instagram_availability(browser, username):
 
         # Strategy 2: Signup Check (Fallback)
         logger.info(f"Profile check inconclusive for @{username}. Trying signup page...")
-        await page.goto("https://www.instagram.com/accounts/emailsignup/", wait_until="networkidle", timeout=20000)
+        try:
+            await page.goto("https://www.instagram.com/accounts/emailsignup/", wait_until="domcontentloaded", timeout=20000)
+        except Exception as e:
+            logger.error(f"Failed to load signup page for @{username}: {e}")
+            await context.close()
+            return None
         
+        # Check for rate limiting or blocking
+        content = await page.content()
+        if "Too many requests" in content or "Please wait a few minutes before you try again" in content:
+            logger.warning("Instagram rate limit detected!")
+            await context.close()
+            return "RATE_LIMIT"
+
         # Handle Cookie Consent if it appears
         try:
-            cookie_btn = await page.wait_for_selector('button:has-text("Allow all cookies"), button:has-text("Accept All")', timeout=5000)
+            cookie_btn = await page.wait_for_selector('button:has-text("Allow all cookies"), button:has-text("Accept All")', timeout=3000)
             if cookie_btn:
                 await cookie_btn.click()
                 logger.info("Clicked cookie consent.")
@@ -181,9 +193,12 @@ async def check_instagram_availability(browser, username):
             pass
 
         # Wait for the username input
-        username_input = await page.wait_for_selector('input[name="username"], input[aria-label="Username"]', timeout=15000)
-        if not username_input:
-            logger.error(f"Could not find username input for @{username}")
+        try:
+            username_input = await page.wait_for_selector('input[name="username"], input[aria-label="Username"]', timeout=15000)
+        except Exception as e:
+            logger.error(f"Could not find username input for @{username}: {e}")
+            # Take a screenshot for debugging
+            await page.screenshot(path=f"debug_{username}.png")
             await context.close()
             return None
 
@@ -192,17 +207,18 @@ async def check_instagram_availability(browser, username):
         await username_input.type(username, delay=random.randint(50, 150))
         await page.keyboard.press("Tab")
         
-        # Wait for validation
-        await asyncio.sleep(5)
+        # Wait for validation (Instagram can be slow)
+        await asyncio.sleep(6)
         
         is_available = await page.evaluate("""() => {
             // Check for success/error icons or text
             const success = document.querySelector('span[aria-label="Success"], .coreSpriteInputAccepted, [aria-label="User name is available"]');
             const error = document.querySelector('span[aria-label="Error"], .coreSpriteInputError, [aria-label="User name is not available"]');
+            
             if (success) return true;
             if (error) return false;
             
-            // Check for specific error text
+            // Check for specific error text in the parent or nearby elements
             const bodyText = document.body.innerText;
             if (bodyText.includes("is not available") || bodyText.includes("Another account is using")) return false;
             
@@ -312,14 +328,20 @@ async def search_loop(context):
                     elif is_available is False:
                         state.taken += 1
                         await update_status(context, "❌ Taken")
+                    elif is_available == "RATE_LIMIT":
+                        await update_status(context, "⏳ *Rate Limited!*")
+                        await send_and_delete(context, state.chat_id, "⏳ Instagram rate limit detected. Resting for 2 minutes...", 10)
+                        await asyncio.sleep(120)
                     else:
                         # Error or uncertain
                         await update_status(context, "⚠️ Error checking")
-                        error_msg = f"⚠️ Error checking @{username}. Retrying..."
+                        error_msg = f"⚠️ Error/Timeout checking @{username}. Retrying..."
                         await send_and_delete(context, state.chat_id, error_msg, 5)
+                        # Longer sleep on error
+                        await asyncio.sleep(10)
                     
                     # Anti-block delay
-                    await asyncio.sleep(random.uniform(1.5, 4.0))
+                    await asyncio.sleep(random.uniform(3.0, 7.0))
                     
             except Exception as e:
                 logger.exception(f"Search Loop Error: {e}")
