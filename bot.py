@@ -90,7 +90,7 @@ Rules:
         "X-Title": "InstaGhostBot"
     }
     data = {
-        "model": "meta-llama/llama-3.3-70b-instruct:free", # Corrected model ID with :free
+        "model": "arcee-ai/trinity-large-preview:free", # Updated model ID
         "messages": [{"role": "user", "content": prompt}]
     }
     
@@ -226,7 +226,8 @@ async def check_instagram_availability(browser, username):
 
 # --- Message Management ---
 async def send_and_delete(context, chat_id, text, delay):
-    msg = await context.bot.send_message(chat_id=chat_id, text=text)
+    formatted_text = f"ℹ️ {text}"
+    msg = await context.bot.send_message(chat_id=chat_id, text=formatted_text, parse_mode='Markdown')
     await asyncio.sleep(delay)
     try:
         await context.bot.delete_message(chat_id=chat_id, message_id=msg.message_id)
@@ -235,27 +236,39 @@ async def send_and_delete(context, chat_id, text, delay):
 
 async def update_status(context, current_status=""):
     status_text = f"""
-🔍 Instagram Username Finder Status:
+✨ *InstaGhost Dashboard* ✨
+━━━━━━━━━━━━━━━━━━━━
+📊 *Statistics:*
+  ├ 🔄 *Attempts:* `{state.attempts}`
+  ├ ✅ *Available:* `{state.available}`
+  └ ❌ *Taken:* `{state.taken}`
 
-Attempts: {state.attempts}
-✅ Available: {state.available}
-❌ Taken: {state.taken}
+🎯 *Current Target:*
+  └ `@{state.current_username}`
 
-Current: @{state.current_username}
-Status: {current_status}
-"""
+📡 *Status:*
+  └ {current_status}
+━━━━━━━━━━━━━━━━━━━━
+    """
     try:
         if state.status_message_id:
             await context.bot.edit_message_text(
                 chat_id=state.chat_id,
                 message_id=state.status_message_id,
-                text=status_text
+                text=status_text,
+                parse_mode='Markdown'
             )
         else:
-            msg = await context.bot.send_message(chat_id=state.chat_id, text=status_text)
+            msg = await context.bot.send_message(
+                chat_id=state.chat_id, 
+                text=status_text,
+                parse_mode='Markdown'
+            )
             state.status_message_id = msg.message_id
     except Exception as e:
-        logger.exception(f"Status Update Error: {e}")
+        # If message is not modified, ignore
+        if "Message is not modified" not in str(e):
+            logger.exception(f"Status Update Error: {e}")
 
 # --- Main Loop ---
 async def search_loop(context):
@@ -280,13 +293,25 @@ async def search_loop(context):
                     
                     if is_available is True:
                         state.available += 1
-                        await update_status(context, "✅ AVAILABLE!")
-                        await context.bot.send_message(
+                        await update_status(context, "✅ *FOUND!*")
+                        
+                        success_msg = f"""
+🎊 *JACKPOT! AVAILABLE USERNAME* 🎊
+━━━━━━━━━━━━━━━━━━━━
+💎 *Username:* `@{username}`
+🔗 *Link:* [instagram.com/{username}](https://www.instagram.com/{username}/)
+━━━━━━━━━━━━━━━━━━━━
+🕒 _This message will self-destruct in 2 minutes._
+                        """
+                        
+                        msg = await context.bot.send_message(
                             chat_id=state.chat_id,
-                            text=f"💎 AVAILABLE USERNAME FOUND!\n\n@{username}"
+                            text=success_msg,
+                            parse_mode='Markdown',
+                            disable_web_page_preview=True
                         )
                         # Auto delete after 2 mins
-                        asyncio.create_task(delete_after_delay(context, state.chat_id, username, 120))
+                        asyncio.create_task(delete_msg_after_delay(context, state.chat_id, msg.message_id, 120))
                     elif is_available is False:
                         state.taken += 1
                         await update_status(context, "❌ Taken")
@@ -307,20 +332,17 @@ async def search_loop(context):
         
         await browser.close()
 
-async def delete_after_delay(context, chat_id, username, delay):
-    # This is a bit tricky since we need the message_id. 
-    # For simplicity, we'll just send the message and delete it here.
-    msg = await context.bot.send_message(chat_id=chat_id, text=f"AVAILABLE USERNAME FOUND\n\n{username}")
+async def delete_msg_after_delay(context, chat_id, message_id, delay):
     await asyncio.sleep(delay)
     try:
-        await context.bot.delete_message(chat_id=chat_id, message_id=msg.message_id)
+        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
     except:
         pass
 
 # --- Bot Commands ---
 async def start_ig(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if state.is_running:
-        await update.message.reply_text("Bot is already running!")
+        await update.message.reply_text("⚠️ *Bot is already running!*", parse_mode='Markdown')
         return
     
     state.is_running = True
@@ -330,19 +352,19 @@ async def start_ig(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state.taken = 0
     state.status_message_id = None
     
-    await update.message.reply_text("🚀 Starting Instagram Username Finder...")
+    await update.message.reply_text("🚀 *Initializing search engine...*", parse_mode='Markdown')
     state.loop_task = asyncio.create_task(search_loop(context))
 
 async def stop_ig(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not state.is_running:
-        await update.message.reply_text("Bot is not running!")
+        await update.message.reply_text("ℹ️ *Bot is not running!*", parse_mode='Markdown')
         return
     
     state.is_running = False
     if state.loop_task:
         state.loop_task.cancel()
     
-    await update.message.reply_text("🛑 Stopping Instagram Username Finder...")
+    await update.message.reply_text("🛑 *Search stopped. Final stats will remain above.*", parse_mode='Markdown')
 
 if __name__ == "__main__":
     if not TELEGRAM_BOT_TOKEN:
